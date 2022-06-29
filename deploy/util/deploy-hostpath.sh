@@ -171,40 +171,40 @@ run () {
 }
 
 # rbac rules
-echo "applying RBAC rules"
-for component in CSI_PROVISIONER CSI_ATTACHER CSI_SNAPSHOTTER CSI_RESIZER CSI_EXTERNALHEALTH_MONITOR; do
-    eval current="\${${component}_RBAC}"
-    eval original="\${${component}_RBAC_YAML}"
-    if [ "$current" != "$original" ]; then
-        echo "Using non-default RBAC rules for $component. Changes from $original to $current are:"
-        diff -c <(wget --quiet -O - "$original") <(if [[ "$current" =~ ^http ]]; then wget --quiet -O - "$current"; else cat "$current"; fi) || true
-    fi
+# echo "applying RBAC rules"
+# for component in CSI_PROVISIONER CSI_ATTACHER CSI_SNAPSHOTTER CSI_RESIZER CSI_EXTERNALHEALTH_MONITOR; do
+#     eval current="\${${component}_RBAC}"
+#     eval original="\${${component}_RBAC_YAML}"
+#     if [ "$current" != "$original" ]; then
+#         echo "Using non-default RBAC rules for $component. Changes from $original to $current are:"
+#         diff -c <(wget --quiet -O - "$original") <(if [[ "$current" =~ ^http ]]; then wget --quiet -O - "$current"; else cat "$current"; fi) || true
+#     fi
 
-    # using kustomize kubectl plugin to add labels to he rbac files.
-    # since we are deploying rbas directly with the url, the kustomize plugin only works with the local files
-    # we need to add the files locally in temp folder and using kustomize adding labels it will be applied
-    if [[ "${current}" =~ ^http:// ]] || [[ "${current}" =~ ^https:// ]]; then
-      run curl "${current}" --output "${TEMP_DIR}"/rbac.yaml --silent --location
-    else
-        # Even for local files we need to copy because kustomize only supports files inside
-        # the root of a kustomization.
-        cp "${current}" "${TEMP_DIR}"/rbac.yaml
-    fi
+#     # using kustomize kubectl plugin to add labels to he rbac files.
+#     # since we are deploying rbas directly with the url, the kustomize plugin only works with the local files
+#     # we need to add the files locally in temp folder and using kustomize adding labels it will be applied
+#     if [[ "${current}" =~ ^http:// ]] || [[ "${current}" =~ ^https:// ]]; then
+#       run curl "${current}" --output "${TEMP_DIR}"/rbac.yaml --silent --location
+#     else
+#         # Even for local files we need to copy because kustomize only supports files inside
+#         # the root of a kustomization.
+#         cp "${current}" "${TEMP_DIR}"/rbac.yaml
+#     fi
 
-    cat <<- EOF > "${TEMP_DIR}"/kustomization.yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
+#     cat <<- EOF > "${TEMP_DIR}"/kustomization.yaml
+# apiVersion: kustomize.config.k8s.io/v1beta1
+# kind: Kustomization
 
-commonLabels:
-  app.kubernetes.io/instance: hostpath.csi.k8s.io
-  app.kubernetes.io/part-of: csi-driver-host-path
+# commonLabels:
+#   app.kubernetes.io/instance: hostpath.csi.k8s.io
+#   app.kubernetes.io/part-of: csi-driver-host-path
 
-resources:
-- ./rbac.yaml
-EOF
+# resources:
+# - ./rbac.yaml
+# EOF
 
-    run kubectl apply --kustomize "${TEMP_DIR}"
-done
+#     run kubectl apply --kustomize "${TEMP_DIR}"
+# done
 
 # deploy hostpath plugin and registrar sidecar
 echo "deploying hostpath components"
