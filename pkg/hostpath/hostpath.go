@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/golang/glog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -78,6 +79,7 @@ type Config struct {
 	DisableNodeExpansion       bool
 	MaxVolumeExpansionSizeNode int64
 	CheckVolumeLifecycle       bool
+	UnpublishVolumeDel         bool
 }
 
 var (
@@ -130,6 +132,17 @@ func (hp *hostPath) Run() error {
 }
 
 // getVolumePath returns the canonical path for hostpath volume
+func (hp *hostPath) getVolumePathV2(attrib map[string]string) string {
+	// attrib := req.GetVolumeContext()
+	ns := attrib["csi.storage.k8s.io/pod.namespace"]
+	podName := attrib["csi.storage.k8s.io/pod.name"]
+	uuid := attrib["csi.storage.k8s.io/pod.uid"]
+	path := fmt.Sprintf("%s/%s/%s", ns, podName, uuid)
+
+	return filepath.Join(hp.config.StateDir, path)
+}
+
+// getVolumePath returns the canonical path for hostpath volume
 func (hp *hostPath) getVolumePath(volID string) string {
 	return filepath.Join(hp.config.StateDir, volID)
 }
@@ -137,6 +150,91 @@ func (hp *hostPath) getVolumePath(volID string) string {
 // getSnapshotPath returns the full path to where the snapshot is stored
 func (hp *hostPath) getSnapshotPath(snapshotID string) string {
 	return filepath.Join(hp.config.StateDir, fmt.Sprintf("%s%s", snapshotID, snapshotExt))
+}
+
+func (hp *hostPath) createVolumeV2(req *csi.NodePublishVolumeRequest, name string, cap int64, volAccessType state.AccessType, ephemeral bool, kind string) (*state.Volume, error) {
+	// Check for maximum available capacity
+	if cap > hp.config.MaxVolumeSize {
+		return nil, status.Errorf(codes.OutOfRange, "Requested capacity %d exceeds maximum allowed %d", cap, hp.config.MaxVolumeSize)
+	}
+	if hp.config.Capacity.Enabled() {
+		if kind == "" {
+			// Pick some kind with sufficient remaining capacity.
+			for k, c := range hp.config.Capacity {
+				if hp.sumVolumeSizes(k)+cap <= c.Value() {
+					kind = k
+					break
+				}
+			}
+		}
+		if kind == "" {
+			// Still nothing?!
+			return nil, status.Errorf(codes.ResourceExhausted, "requested capacity %d of arbitrary storage exceeds all remaining capacity", cap)
+		}
+		used := hp.sumVolumeSizes(kind)
+		available := hp.config.Capacity[kind]
+		if used+cap > available.Value() {
+			return nil, status.Errorf(codes.ResourceExhausted, "requested capacity %d exceeds remaining capacity for %q, %s out of %s already used",
+				cap, kind, resource.NewQuantity(used, resource.BinarySI).String(), available.String())
+		}
+	} else if kind != "" {
+		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("capacity tracking disabled, specifying kind %q is invalid", kind))
+	}
+
+	path := hp.getVolumePathV2(req.GetVolumeContext())
+
+	switch volAccessType {
+	case state.MountAccess:
+		err := os.MkdirAll(path, 0777)
+		if err != nil {
+			return nil, err
+		}
+	case state.BlockAccess:
+		executor := utilexec.New()
+		size := fmt.Sprintf("%dM", cap/mib)
+		// Create a block file.
+		_, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				out, err := executor.Command("fallocate", "-l", size, path).CombinedOutput()
+				if err != nil {
+					return nil, fmt.Errorf("failed to create block device: %v, %v", err, string(out))
+				}
+			} else {
+				return nil, fmt.Errorf("failed to stat block device: %v, %v", path, err)
+			}
+		}
+
+		// Associate block file with the loop device.
+		volPathHandler := volumepathhandler.VolumePathHandler{}
+		_, err = volPathHandler.AttachFileDevice(path)
+		if err != nil {
+			// Remove the block file because it'll no longer be used again.
+			if err2 := os.Remove(path); err2 != nil {
+				glog.Errorf("failed to cleanup block file %s: %v", path, err2)
+			}
+			return nil, fmt.Errorf("failed to attach device %v: %v", path, err)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported access type %v", volAccessType)
+	}
+
+	volID := req.GetVolumeId()
+	volume := state.Volume{
+		VolID:         volID,
+		VolName:       name,
+		VolSize:       cap,
+		VolPath:       path,
+		VolAccessType: volAccessType,
+		Ephemeral:     ephemeral,
+		Kind:          kind,
+	}
+	glog.V(4).Infof("adding hostpath volume: %s = %+v", volID, volume)
+	if err := hp.state.UpdateVolume(volume); err != nil {
+		return nil, err
+	}
+
+	return &volume, nil
 }
 
 // createVolume allocates capacity, creates the directory for the hostpath volume, and
@@ -245,7 +343,8 @@ func (hp *hostPath) deleteVolume(volID string) error {
 		}
 	}
 
-	path := hp.getVolumePath(volID)
+	path := vol.VolPath
+	// path := hp.getVolumePath(volID)
 	if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}

@@ -110,7 +110,6 @@ func checkMountPointExist(volumePath string) (bool, error) {
 		if !strings.Contains(mountInfo.Source, volumePath) {
 			continue
 		}
-
 		_, err = os.Stat(mountInfo.Target)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -193,6 +192,24 @@ func (hp *hostPath) doHealthCheckInControllerSide(volID string) (bool, string) {
 func (hp *hostPath) doHealthCheckInNodeSide(volID string) (bool, string) {
 	volumePath := hp.getVolumePath(volID)
 	mpExist, err := checkMountPointExist(volumePath)
+	if err != nil {
+		return false, err.Error()
+	}
+
+	if !mpExist {
+		return false, "The volume isn't mounted"
+	}
+
+	return true, ""
+}
+
+func (hp *hostPath) doHealthCheckInNodeSideV2(volID string) (bool, string) {
+	// volumePath := hp.getVolumePath(volID)
+	vol, err := hp.state.GetVolumeByID(volID)
+	if err != nil {
+		return false, err.Error()
+	}
+	mpExist, err := checkMountPointExist(vol.VolPath)
 	if err != nil {
 		return false, err.Error()
 	}

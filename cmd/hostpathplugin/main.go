@@ -68,6 +68,8 @@ func main() {
 	// for proxying incoming calls to the embedded mock CSI driver.
 	proxyEndpoint := flag.String("proxy-endpoint", "", "Instead of running the CSI driver code, just proxy connections from csiEndpoint to the given listening socket.")
 
+	flag.BoolVar(&cfg.UnpublishVolumeDel, "delete-ephemeral-volume", false, "Enables delete ephemeral volume.")
+
 	flag.Parse()
 
 	if *showVersion {
