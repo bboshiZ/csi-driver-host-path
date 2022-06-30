@@ -7,3 +7,38 @@ bash deploy/kubernetes-1.21/deploy.sh
 
 #### Uninstall
 bash deploy/kubernetes-1.21/destroy.sh
+
+
+#### 使用方式
+
+```
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sleep
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: sleep
+  template:
+    metadata:
+      labels:
+        app: sleep
+      annotations:
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+      - name: sleep
+        image: busybox
+        command: ["/bin/sleep", "3650d"]
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+        - mountPath: "/data"
+          name: my-csi-volume
+      volumes:
+        - name: my-csi-volume
+          csi:
+            driver: hostpath.csi.k8s.io
+
+```
