@@ -219,8 +219,7 @@ spec:
       tolerations:
         - operator: Exists
       serviceAccountName: csi-hostpathplugin-sa
-      imagePullSecrets:
-        - name: harbor-secret
+      priorityClassName: system-node-critical
       containers:
         - name: hostpath
           # image: registry.k8s.io/sig-storage/hostpathplugin:v1.8.0
