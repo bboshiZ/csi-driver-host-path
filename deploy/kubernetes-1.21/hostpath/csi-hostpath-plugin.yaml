@@ -202,6 +202,11 @@ spec:
   # Host path driver only works when everything runs
   # on a single node.
   # replicas: 1
+  updateStrategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+    type: RollingUpdate
   selector:
     matchLabels:
       app.kubernetes.io/instance: hostpath.csi.k8s.io
